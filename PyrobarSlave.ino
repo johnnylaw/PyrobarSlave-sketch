@@ -1,25 +1,22 @@
 #include <Wire.h>
 #include "PyrobarSlaveConstants.h"
 #include "PololuLedStrip.h"
-
-typedef struct LightZoneInfo {
-  uint8_t strip;
-  uint16_t start,        // first index
-           count;        // number of distinct addresses
-  boolean isSymmetrical;
-} LightZoneInfo;
+#include "PyrobarLightStrip.h"
 
 PololuLedStrip<26> strip0;
 PololuLedStrip<28> strip1;
-PololuLedStrip<30> strip2;
-PololuLedStrip<32> strip3;
-PololuLedStrip<34> strip4;
-PololuLedStrip<36> strip5;
-PololuLedStripBase *ledStrips[6] = {&strip0, &strip1, &strip2, &strip3, &strip4, &strip5};
 
-const int totalZoneCount = 10;
-const int lightProgramPacketSize = 3 * 10;
-LightZoneInfo lightZonesInfo[totalZoneCount] = {
+#ifdef SLAVE1
+
+LightZoneInfo lightZonesInfo[8] = {
+  {0, 0, 25, true},    // Steps
+  {1, 0, 175, true}  // Undercarriage (offset will change for cartesian system)
+};
+PololuLedStripBase *ledStrips[2] = {&strip0, &strip1};
+
+#else
+
+LightZoneInfo lightZonesInfo[8] = {
   {0, 81, 18, false},  // Crane ring
   {0, 54, 27, false},  // Crane top
   {0, 27, 27, false},  // Crane middle
@@ -28,20 +25,67 @@ LightZoneInfo lightZonesInfo[totalZoneCount] = {
   {2, 0, 45, true},    // Bar ceiling
   {3, 0, 45, true},    // Bar surface
   {4, 0, 15, true},    // DJ booth
-  {0, 0, 25, true},    // Steps
-  {1, 100, 175, true}  // Undercarriage (offset will change for cartesian system)
 };
-                                                         // Value for Slave 1
-const uint8_t lowZone = 0;                               // 8
-const uint8_t highZone = 7;                              // 9
-const uint8_t ledStripCount = 5;                         // 2
-rgb_color tempColors[ledStripCount][100];                // [350] (longest strip)
-const int stripAddressCounts[] = {100, 100, 90, 90, 30}; // {50, 350}
+PololuLedStrip<30> strip2;
+PololuLedStrip<32> strip3;
+PololuLedStrip<34> strip4;
+PololuLedStripBase *ledStrips[5] = {&strip0, &strip1, &strip2, &strip3, &strip4};
+
+#endif
+
+#ifdef SLAVE1
+
+const uint8_t lowZone = 8;
+const uint8_t highZone = 9;
+const uint8_t ledStripCount = 2;
+rgb_color tempColors[ledStripCount][350];
+const int stripAddressCounts[] = {50, 350};
+
+#else
+
+const uint8_t lowZone = 0;
+const uint8_t highZone = 7;
+const uint8_t ledStripCount = 5;
+rgb_color tempColors[ledStripCount][350];
+const int stripAddressCounts[] = {100, 100, 90, 90, 30};
+
+#endif
+
+#ifdef SLAVE1
+
+// Only need coordinates; color will be 0, 0, 0 by default
+Pixel pixels0[175] = {{1000, 500}, {999, 499}}; // Crane and ring
+Pixel pixels1[50] =  {{1000, 500}}; // Lounge
+PyrobarLightStrip lightStrips2d[2] = {
+  {pixels0, 175, true, 100, tempColors[0]},
+  {pixels1, 50, true, 0, tempColors[1]}
+};
+
+#else
+
+Pixel pixels0[100] = {{1000, 500}, {999, 499}}; // Crane and ring
+Pixel pixels1[50] =  {{1000, 500}}; // Lounge
+Pixel pixels2[45] =  {{1000, 500}}; // Bar ceiling
+Pixel pixels3[45] =  {{1000, 500}}; // Bar surface
+Pixel pixels3[15] =  {{1000, 500}}; // DJ booth
+PyrobarLightStrip lightStrips2d[5] = {
+  {pixels0, 175, false, 0, tempColors[0]},
+  {pixels1, 50, true, 0, tempColors[1]},
+  {pixels1, 45, true, 0, tempColors[2]},
+  {pixels1, 45, true, 0, tempColors[3]},
+  {pixels1, 15, true, 0, tempColors[4]},
+};
+
+#endif
+
+const int totalZoneCount = 10;
+const int lightProgramPacketSize = 3 * 10;
 
 const int zoneCount = highZone - lowZone + 1;
-rgb_color programValues[zoneCount];
+float halfLife;
+unsigned long lastLoopTime;
 
-boolean lightProgramIsOn = false;
+LightMode lightMode = BALL_DRAG;
 
 void setup() {
   Serial.begin(9600);
@@ -51,18 +95,35 @@ void setup() {
 
   Wire.onReceive(parseIncoming);
   Serial.println("Hello");
+  
+  lastLoopTime = millis();
 }
 
 void loop() {
-  // put your main code here, to run repeatedly:
-  delay(10000000);
+  lastLoopTime = millis();
+  if (lightMode == BALL_DRAG) {
+    float elapsedTime = (millis() - lastLoopTime) / 1000.0;
+    float decayFactor = pow(0.5, elapsedTime / halfLife);
+    for (int stripInd = 0; stripInd < ledStripCount; stripInd++) {
+      lightStrips2d[stripInd].update(decayFactor);
+    }
+    writeToStrips();
+  }
+  delay(25);
 }
 
 void parseIncoming(int packetSize) {
-  if (packetSize == 6) {   // lightBall(position, red, green, blue, decay)
-    shutDownLightProgram();
+  if (packetSize == 7) {   // light ball information (x, y, radius, red, green, blue, halfLifeInt)
+    lightMode = BALL_DRAG;
+    Location location = {Wire.read(), Wire.read()};
+    uint8_t radius = Wire.read();
+    rgb_color color = {Wire.read(), Wire.read(), Wire.read()};
+    halfLife = Wire.read() / 128.0; // highest = 2.0
+    for (int stripInd = 0; stripInd < ledStripCount; stripInd++) {
+      lightStrips2d[stripInd].setBall(location, radius, color);
+    }
   } else if (packetSize == lightProgramPacketSize) {
-    igniteLightProgram();
+    lightMode = PROGRAM;
     for (int disposalZoneIndex = 0; disposalZoneIndex < lowZone; disposalZoneIndex++) {
       for (int color = 0; color < 3; color++) {
         uint8_t _ = Wire.read();
@@ -76,39 +137,14 @@ void parseIncoming(int packetSize) {
   }
 }
 
-void shutDownLightProgram() {
-  if (lightProgramIsOn) {
-    lightProgramIsOn = false;
-    rgb_color color = {0, 0, 0};
-    for (int zoneInd = lowZone; zoneInd <= highZone; zoneInd++) {
-      writeEntireZoneBuffer(zoneInd, color);
-    }
-    writeToStrips();
-  }
-}
-
 void writeToStrips() {
-//  strip0.write(tempColors[0], stripAddressCounts[0]);
-//  strip1.write(tempColors[1], stripAddressCounts[1]);
-//  if (ledStripCount > 2) {
-//    strip2.write(tempColors[2], stripAddressCounts[2]);
-//    if (ledStripCount > 3) {
-//      strip3.write(tempColors[3], stripAddressCounts[3]);
-//      if (ledStripCount > 4) {
-//        strip4.write(tempColors[4], stripAddressCounts[4]);
-//        if (ledStripCount > 4) {
-//          strip5.write(tempColors[5], stripAddressCounts[5]);
-//        }
-//      }
-//    }
-//  }
   for (int stripInd = 0; stripInd < ledStripCount; stripInd++) {
     ledStrips[stripInd]->write(tempColors[stripInd], stripAddressCounts[stripInd]);
   }
 }
 
 void igniteLightProgram() {
-  lightProgramIsOn = true;
+  lightMode = PROGRAM;
 }
 
 void writeEntireZoneBuffer(int zoneIndex, rgb_color color) {
@@ -118,3 +154,4 @@ void writeEntireZoneBuffer(int zoneIndex, rgb_color color) {
     tempColors[zoneInfo.strip][address] = color;
   }
 }
+
