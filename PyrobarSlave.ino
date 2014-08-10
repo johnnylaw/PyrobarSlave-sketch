@@ -43,10 +43,10 @@ PololuLedStrip<35> strip3;
 PololuLedStrip<37> strip4;
 
 LightZoneInfo lightZonesInfo[8] = {
-  {0, 81, 18, false},  // Crane ring
-  {0, 54, 27, false},  // Crane top
-  {0, 27, 27, false},  // Crane middle
-  {0, 0, 27, false},   // Crane base
+  {0, 0, 18, false},  // Crane ring
+  {0, 18, 27, false},  // Crane top
+  {0, 45, 27, false},  // Crane middle
+  {0, 72, 27, false},   // Crane base
   {1, 0, 50, true},    // Lounge
   {2, 0, 45, true},    // Bar ceiling
   {3, 0, 45, true},    // Bar surface
@@ -92,13 +92,13 @@ LightMode lightMode = BALL_DRAG;
 
 void setup() {
   Serial.begin(9600);
-  
+
   Serial.print("Setting up I2C at "); Serial.println(BASE_I2C_ADDRESS);
   Wire.begin(BASE_I2C_ADDRESS);
 
   Wire.onReceive(parseIncoming);
   Serial.println("Hello");
-  
+
   lastLoopTime = millis();
 }
 
@@ -136,7 +136,7 @@ void parseIncoming(int packetSize) {
     }
   } else if (packetSize == lightProgramPacketSize) {
     lightMode = PROGRAM;
-    
+
     for (int disposalZoneIndex = 0; disposalZoneIndex < lowZone; disposalZoneIndex++) {
       for (int color = 0; color < 3; color++) {
         uint8_t _ = Wire.read();
@@ -144,7 +144,7 @@ void parseIncoming(int packetSize) {
     }
     for (int zoneIndex = lowZone; zoneIndex <= highZone; zoneIndex++) {
       // Can't simply do the following because of reordering of colors
-      // rgb_color color = {Wire.read(), Wire.read(), Wire.read()};  
+      // rgb_color color = {Wire.read(), Wire.read(), Wire.read()};
       rgb_color color;
       color.red = Wire.read();
       color.green = Wire.read();
@@ -152,7 +152,7 @@ void parseIncoming(int packetSize) {
       writeEntireZoneBuffer(zoneIndex, color);
     }
     while(Wire.available()) Wire.read();
-    
+
     writeToStrips();
   } else { Serial.print("Incoming: "); Serial.println(packetSize); }
 }
