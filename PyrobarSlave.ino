@@ -1,6 +1,8 @@
+#include <SPI.h>
+#include <Ethernet.h>
 #include <Wire.h>
 #include "PyrobarSlaveConstants.h"
-#include "PololuLedStrip.h"
+#include "PyrobarSlaveOnlyConstants.h"
 #include "PyrobarLightStrip.h"
 
 const int totalZoneCount = 10;
